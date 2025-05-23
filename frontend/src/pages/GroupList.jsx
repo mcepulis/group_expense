@@ -1,73 +1,93 @@
 import React, { useEffect, useState } from 'react';
-import api from '../api';
+import groupService from '../api';
 import { Link } from 'react-router-dom';
 
 function GroupList() {
-  const [groups, setGroups] = useState([]);
-  const [title, setTitle] = useState('');
-  const [error, setError] = useState('');
+  const [userGroups, setUserGroups] = useState([]);
+  const [groupTitle, setGroupTitle] = useState('');
+  const [errorMessage, setErrorMessage] = useState('');
+  const [isCreating, setIsCreating] = useState(false);
 
   useEffect(() => {
-    fetchGroups();
+    loadUserGroups();
   }, []);
 
-  const fetchGroups = async () => {
+  const loadUserGroups = async () => {
     try {
-      const { data } = await api.getGroups();
-      setGroups(data);
-      setError('');
-    } catch (err) {
-      setError('Failed to fetch groups');
+      const response = await groupService.fetchAllGroups();
+      setUserGroups(response.data);
+      setErrorMessage('');
+    } catch (error) {
+      setErrorMessage('Unable to load your groups');
     }
   };
 
-  const handleCreate = async () => {
-    if (!title) return;
+  const createNewGroup = async () => {
+    if (!groupTitle.trim()) return;
+    
+    setIsCreating(true);
     try {
-      await api.createGroup(title);
-      setTitle('');
-      fetchGroups();
-      setError('');
-    } catch (err) {
-      setError('Failed to create group');
+      await groupService.createNewGroup(groupTitle);
+      setGroupTitle('');
+      await loadUserGroups();
+      setErrorMessage('');
+    } catch (error) {
+      setErrorMessage('Failed to create group');
+    } finally {
+      setIsCreating(false);
     }
   };
 
   return (
-    <div>
-      <h1 className="text-2xl font-bold mb-4">Your Groups</h1>
-      <div className="mb-4">
-        <input
-          className="border p-2 mr-2"
-          value={title}
-          onChange={e => setTitle(e.target.value)}
-          placeholder="Group Title"
-        />
-        <button
-          className="bg-blue-500 text-white px-4 py-2"
-          onClick={handleCreate}
-          disabled={!title.trim()}
-        >
-          Create
-        </button>
+    <div className="max-w-2xl mx-auto">
+      <header className="text-center mb-8">
+        <h1 className="text-4xl font-bold text-gray-900 mb-2">Expense Groups</h1>
+        <p className="text-gray-600">Track shared expenses with friends and family</p>
+      </header>
+
+      <div className="bg-white rounded-lg shadow-sm border p-6 mb-8">
+        <h2 className="text-lg font-semibold text-gray-800 mb-4">Create New Group</h2>
+        <div className="flex space-x-3">
+          <input
+            className="flex-1 px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
+            value={groupTitle}
+            onChange={e => setGroupTitle(e.target.value)}
+            placeholder="Enter group name (e.g., 'Weekend Trip', 'Roommates')"
+          />
+          <button
+            className="px-6 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+            onClick={createNewGroup}
+            disabled={!groupTitle.trim() || isCreating}
+          >
+            {isCreating ? 'Creating...' : 'Create Group'}
+          </button>
+        </div>
+        {errorMessage && <p className="text-red-500 text-sm mt-2">{errorMessage}</p>}
       </div>
-      {error && <p className="text-red-600 mb-2">{error}</p>}
-      <ul>
-      {groups.map(group => (
-        <li key={group.id} className="mb-2">
-          <Link to={`/group/${group.id}`} className="text-blue-600 underline">
-            {group.title}
-          </Link>
-          {group.balance !== undefined && (
-            <span className="ml-2">
-              — Balance: <span className={group.balance < 0 ? 'text-green-600' : group.balance > 0 ? 'text-red-600' : ''}>
-                {group.balance.toFixed(2)}
-              </span>
-            </span>
-          )}
-        </li>
-      ))}
-      </ul>
+
+      <div className="bg-white rounded-lg shadow-sm border p-6">
+        <h2 className="text-lg font-semibold text-gray-800 mb-4">Your Groups</h2>
+        {userGroups.length > 0 ? (
+          <ul className="space-y-3">
+            {userGroups.map(group => (
+              <li key={group.id} className="flex items-center justify-between py-3 px-4 bg-gray-50 rounded-lg hover:bg-gray-100 transition-colors">
+                <Link to={`/group/${group.id}`} className="flex-1 text-indigo-600 hover:text-indigo-800 font-medium">
+                  {group.title}
+                </Link>
+                {group.balance !== undefined && (
+                  <span className={`text-sm font-semibold ${
+                    group.balance < 0 ? 'text-green-600' : group.balance > 0 ? 'text-red-600' : 'text-gray-500'
+                  }`}>
+                    {group.balance === 0 ? 'Settled' : `$${Math.abs(group.balance).toFixed(2)} ${group.balance < 0 ? 'you are owed' : 'you owe'}`}
+                  </span>
+                )}
+              </li>
+            ))}
+          </ul>
+        ) : (
+          <p className="text-gray-500 text-center py-8">No groups yet. Create your first group to get started!</p>
+        )}
+      </div>
     </div>
   );
 }

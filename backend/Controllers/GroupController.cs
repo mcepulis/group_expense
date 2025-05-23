@@ -2,7 +2,6 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using GroupExpenseApp.Data;
 using GroupExpenseApp.Models;
-using System.Linq;
 using GroupExpenseApp.DTOs;
 
 namespace GroupExpenseApp.Controllers
@@ -12,6 +11,7 @@ namespace GroupExpenseApp.Controllers
     public class GroupsController : ControllerBase
     {
         private readonly AppDbContext _context;
+        
         public GroupsController(AppDbContext context)
         {
             _context = context;
@@ -37,12 +37,9 @@ namespace GroupExpenseApp.Controllers
                         if (split.MemberId != transaction.PayerId)
                         {
                             memberBalances[split.MemberId] += split.Amount;
+                            memberBalances[transaction.PayerId] -= split.Amount;
                         }
                     }
-
-                    var payerSplit = transaction.Splits.FirstOrDefault(s => s.MemberId == transaction.PayerId);
-                    var payerOwed = transaction.TotalAmount - (payerSplit?.Amount ?? 0);
-                    memberBalances[transaction.PayerId] -= payerOwed;
                 }
 
                 var userBalance = memberBalances.Values.FirstOrDefault();
@@ -58,8 +55,7 @@ namespace GroupExpenseApp.Controllers
             return Ok(result);
         }
 
-
-        [HttpGet("{id}")]
+        [HttpGet("{id:int}")]
         public IActionResult GetGroup(int id)
         {
             var group = _context.Groups.FirstOrDefault(g => g.Id == id);
@@ -67,7 +63,7 @@ namespace GroupExpenseApp.Controllers
             return Ok(group);
         }
 
-        [HttpGet("{groupId}/members")]
+        [HttpGet("{groupId:int}/members")]
         public IActionResult GetMembers(int groupId)
         {
             var group = _context.Groups
@@ -78,29 +74,18 @@ namespace GroupExpenseApp.Controllers
 
             if (group == null) return NotFound();
 
-            var memberBalances = new Dictionary<int, decimal>();
-
-            foreach (var member in group.Members)
-            {
-                memberBalances[member.Id] = 0;
-            }
+            var memberBalances = group.Members.ToDictionary(m => m.Id, m => 0m);
 
             foreach (var transaction in group.Transactions)
             {
-                var totalSplitAmount = transaction.Splits.Sum(s => s.Amount);
-
                 foreach (var split in transaction.Splits)
                 {
                     if (split.MemberId != transaction.PayerId)
                     {
                         memberBalances[split.MemberId] += split.Amount;
+                        memberBalances[transaction.PayerId] -= split.Amount;
                     }
                 }
-
-                var payerSplit = transaction.Splits.FirstOrDefault(s => s.MemberId == transaction.PayerId);
-                var payerOwedAmount = transaction.TotalAmount - (payerSplit?.Amount ?? 0);
-
-                memberBalances[transaction.PayerId] -= payerOwedAmount;
             }
 
             var members = group.Members.Select(m => new
@@ -113,13 +98,14 @@ namespace GroupExpenseApp.Controllers
             return Ok(members);
         }
 
-        [HttpGet("{groupId}/transactions")]
+        [HttpGet("{groupId:int}/transactions")]
         public IActionResult GetTransactions(int groupId)
         {
             var group = _context.Groups
                 .Include(g => g.Transactions)
                     .ThenInclude(t => t.Payer)
                 .FirstOrDefault(g => g.Id == groupId);
+            
             if (group == null) return NotFound();
 
             var transactions = group.Transactions.Select(t => new {
@@ -140,53 +126,39 @@ namespace GroupExpenseApp.Controllers
             return Ok(group);
         }
 
-        [HttpPost("{groupId}/members")]
+        [HttpPost("{groupId:int}/members")]
         public IActionResult AddMember(int groupId, [FromBody] AddMemberDto memberDto)
         {
-            try
+            if (string.IsNullOrWhiteSpace(memberDto.Name))
             {
-                Console.WriteLine($"=== AddMember Debug ===");
-                Console.WriteLine($"GroupId: {groupId}");
-                Console.WriteLine($"Member name: {memberDto.Name}");
-                
-                if (string.IsNullOrEmpty(memberDto.Name))
-                {
-                    return BadRequest("Member name is required");
-                }
-                
-                var group = _context.Groups.FirstOrDefault(g => g.Id == groupId);
-                if (group == null)
-                {
-                    return NotFound($"Group {groupId} not found");
-                }
-                
-                var newMember = new Member
-                {
-                    Name = memberDto.Name,
-                    GroupId = groupId,
-                    Balances = new Dictionary<int, decimal>()
-                };
-                
-                _context.Members.Add(newMember);
-                _context.SaveChanges();
-                
-                var result = new
-                {
-                    Id = newMember.Id,
-                    Name = newMember.Name,
-                    Balance = 0
-                };
-                
-                return Ok(result);
+                return BadRequest("Member name is required");
             }
-            catch (Exception ex)
+            
+            var group = _context.Groups.FirstOrDefault(g => g.Id == groupId);
+            if (group == null)
             {
-                Console.WriteLine($"ERROR: {ex.Message}");
-                return BadRequest($"Server error: {ex.Message}");
+                return NotFound($"Group not found");
             }
+            
+            var newMember = new Member
+            {
+                Name = memberDto.Name.Trim(),
+                GroupId = groupId,
+                Balances = new Dictionary<int, decimal>()
+            };
+            
+            _context.Members.Add(newMember);
+            _context.SaveChanges();
+            
+            return Ok(new
+            {
+                Id = newMember.Id,
+                Name = newMember.Name,
+                Balance = 0m
+            });
         }
 
-       [HttpDelete("{groupId}/members/{memberId}")]
+        [HttpDelete("{groupId:int}/members/{memberId:int}")]
         public IActionResult RemoveMember(int groupId, int memberId)
         {
             var group = _context.Groups
@@ -196,64 +168,41 @@ namespace GroupExpenseApp.Controllers
                 .FirstOrDefault(g => g.Id == groupId);
 
             if (group == null) return NotFound();
+            
             var member = group.Members.FirstOrDefault(m => m.Id == memberId);
             if (member == null) return NotFound();
 
-            Console.WriteLine($"=== Attempting to remove member {memberId} from group {groupId}");
-
-            var balance = 0m;
-            foreach (var t in group.Transactions)
-            {
-                foreach (var s in t.Splits)
-                {
-                    if (s.MemberId == memberId && t.PayerId != memberId)
-                        balance += s.Amount;
-                    else if (t.PayerId == memberId && s.MemberId != memberId)
-                        balance -= s.Amount;
-                }
-            }
+            var balance = CalculateMemberBalance(group.Transactions, memberId);
 
             if (Math.Abs(balance) > 0.01m)
             {
-                Console.WriteLine($"Balance check failed. Balance: {balance:F2}");
                 return BadRequest($"Member must be settled first. Balance: {balance:F2}");
             }
 
-            var transactions = group.Transactions.ToList();
-
-            var splitsToRemove = transactions
+            var splitsToRemove = group.Transactions
                 .SelectMany(t => t.Splits)
-                .Where(s => s.MemberId == memberId)
-                .ToList();
+                .Where(s => s.MemberId == memberId);
 
-            Console.WriteLine($"Removing {splitsToRemove.Count} splits...");
             _context.Splits.RemoveRange(splitsToRemove);
 
-            var transactionsToRemove = transactions
-                .Where(t => t.PayerId == memberId)
-                .ToList();
+            var transactionsToRemove = group.Transactions
+                .Where(t => t.PayerId == memberId);
 
-            Console.WriteLine($"Removing {transactionsToRemove.Count} transactions where member was payer...");
             _context.Transactions.RemoveRange(transactionsToRemove);
-
             _context.Members.Remove(member);
 
             try
             {
                 _context.SaveChanges();
-                Console.WriteLine($"Member {memberId} removed successfully.");
                 return Ok();
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"Exception: {ex.Message}");
-                return StatusCode(500, "Failed to delete member: " + ex.Message);
+                return StatusCode(500, "Failed to remove member");
             }
         }
 
-
-
-        [HttpPost("{groupId}/settle/{memberId}")]
+        [HttpPost("{groupId:int}/settle/{memberId:int}")]
         public IActionResult Settle(int groupId, int memberId)
         {
             var group = _context.Groups
@@ -263,60 +212,79 @@ namespace GroupExpenseApp.Controllers
                 .FirstOrDefault(g => g.Id == groupId);
             
             if (group == null) return NotFound();
+            
             var member = group.Members.FirstOrDefault(m => m.Id == memberId);
             if (member == null) return NotFound();
 
-            var balance = 0m;
-            foreach (var t in group.Transactions)
-            {
-                foreach (var s in t.Splits)
-                {
-                    if (s.MemberId == memberId && t.PayerId != memberId)
-                        balance += s.Amount;
-                    else if (t.PayerId == memberId && s.MemberId != memberId)
-                        balance -= s.Amount;
-                }
-            }
+            var balance = CalculateMemberBalance(group.Transactions, memberId);
 
             if (Math.Abs(balance) < 0.01m)
-                return Ok(new { message = "Already settled." });
+                return Ok(new { message = "Already settled" });
 
-            foreach (var other in group.Members.Where(m => m.Id != memberId))
+            foreach (var otherMember in group.Members.Where(m => m.Id != memberId))
             {
-                var netBetween = 0m;
+                var netAmount = CalculateNetAmount(group.Transactions, memberId, otherMember.Id);
 
-                foreach (var t in group.Transactions)
+                if (Math.Abs(netAmount) > 0.01m)
                 {
-                    foreach (var s in t.Splits)
+                    var settlementTransaction = new Transaction
                     {
-                        if (s.MemberId == memberId && t.PayerId == other.Id)
-                            netBetween += s.Amount;
-                        else if (s.MemberId == other.Id && t.PayerId == memberId)
-                            netBetween -= s.Amount;
-                    }
-                }
-
-                if (Math.Abs(netBetween) > 0.01m)
-                {
-                    var settlementTx = new Transaction
-                    {
-                        Description = $"Settlement between {member.Name} and {other.Name}",
-                        TotalAmount = Math.Abs(netBetween),
-                        PayerId = netBetween > 0 ? memberId : other.Id,
+                        Description = $"Settlement: {member.Name} & {otherMember.Name}",
+                        TotalAmount = Math.Abs(netAmount),
+                        PayerId = netAmount > 0 ? memberId : otherMember.Id,
                         Splits = new List<Split>
                         {
-                            new Split { MemberId = netBetween > 0 ? other.Id : memberId, Amount = Math.Abs(netBetween) }
+                            new Split 
+                            { 
+                                MemberId = netAmount > 0 ? otherMember.Id : memberId, 
+                                Amount = Math.Abs(netAmount) 
+                            }
                         }
                     };
 
-                    _context.Transactions.Add(settlementTx);
-                    _context.Entry(settlementTx).Property("GroupId").CurrentValue = groupId;
+                    _context.Transactions.Add(settlementTransaction);
+                    _context.Entry(settlementTransaction).Property("GroupId").CurrentValue = groupId;
                 }
             }
 
             _context.SaveChanges();
-            return Ok(new { message = "Settled." });
+            return Ok(new { message = "Settlement completed" });
         }
 
+        private decimal CalculateMemberBalance(IEnumerable<Transaction> transactions, int memberId)
+        {
+            decimal balance = 0m;
+            
+            foreach (var transaction in transactions)
+            {
+                foreach (var split in transaction.Splits)
+                {
+                    if (split.MemberId == memberId && transaction.PayerId != memberId)
+                        balance += split.Amount;
+                    else if (transaction.PayerId == memberId && split.MemberId != memberId)
+                        balance -= split.Amount;
+                }
+            }
+            
+            return balance;
+        }
+
+        private decimal CalculateNetAmount(IEnumerable<Transaction> transactions, int memberId1, int memberId2)
+        {
+            decimal netAmount = 0m;
+            
+            foreach (var transaction in transactions)
+            {
+                foreach (var split in transaction.Splits)
+                {
+                    if (split.MemberId == memberId1 && transaction.PayerId == memberId2)
+                        netAmount += split.Amount;
+                    else if (split.MemberId == memberId2 && transaction.PayerId == memberId1)
+                        netAmount -= split.Amount;
+                }
+            }
+            
+            return netAmount;
+        }
     }
 }

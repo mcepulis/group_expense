@@ -1,4 +1,3 @@
-
 using Microsoft.EntityFrameworkCore;
 using GroupExpenseApp.Models;
 
@@ -6,7 +5,7 @@ namespace GroupExpenseApp.Data
 {
     public class AppDbContext : DbContext
     {
-        public AppDbContext(DbContextOptions options) : base(options) { }
+        public AppDbContext(DbContextOptions<AppDbContext> options) : base(options) { }
 
         public DbSet<Group> Groups { get; set; }
         public DbSet<Member> Members { get; set; }
@@ -21,17 +20,17 @@ namespace GroupExpenseApp.Data
                 .HasForeignKey(m => m.GroupId)
                 .OnDelete(DeleteBehavior.Cascade);
 
-           modelBuilder.Entity<Split>()
+            modelBuilder.Entity<Split>()
                 .HasOne(s => s.Member)
                 .WithMany()
                 .HasForeignKey(s => s.MemberId)
-                .OnDelete(DeleteBehavior.Cascade); 
+                .OnDelete(DeleteBehavior.Cascade);
 
             modelBuilder.Entity<Split>()
                 .HasOne(s => s.Transaction)
                 .WithMany(t => t.Splits)
                 .HasForeignKey(s => s.TransactionId)
-                .OnDelete(DeleteBehavior.ClientCascade);;
+                .OnDelete(DeleteBehavior.ClientCascade);
 
             modelBuilder.Entity<Transaction>()
                 .HasOne(t => t.Payer)
@@ -44,6 +43,14 @@ namespace GroupExpenseApp.Data
                 .WithMany(g => g.Transactions)
                 .HasForeignKey("GroupId")
                 .OnDelete(DeleteBehavior.Cascade);
+
+            modelBuilder.Entity<Transaction>()
+                .Property(t => t.TotalAmount)
+                .HasPrecision(18, 2);
+
+            modelBuilder.Entity<Split>()
+                .Property(s => s.Amount)
+                .HasPrecision(18, 2);
         }
     }
 }

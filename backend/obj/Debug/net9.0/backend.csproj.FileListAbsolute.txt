@@ -45,3 +45,4 @@ C:\projects\group_expense\backend\obj\Debug\net9.0\refint\backend.dll
 C:\projects\group_expense\backend\obj\Debug\net9.0\backend.pdb
 C:\projects\group_expense\backend\obj\Debug\net9.0\backend.genruntimeconfig.cache
 C:\projects\group_expense\backend\obj\Debug\net9.0\ref\backend.dll
+C:\projects\group_expense\backend\obj\Debug\net9.0\backend.sourcelink.json
