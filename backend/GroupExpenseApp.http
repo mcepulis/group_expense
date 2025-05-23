@@ -1,0 +1,6 @@
+@GroupExpenseApp_HostAddress = http://localhost:5140
+
+GET {{GroupExpenseApp_HostAddress}}/weatherforecast/
+Accept: application/json
+
+###
